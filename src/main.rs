@@ -253,6 +253,37 @@ fn status_char(status: &FileStatus) -> &'static str {
     }
 }
 
+fn build_title(branch: &str, state: &GitState) -> Line<'static> {
+    let mut spans = vec![
+        Span::raw(" watchdiff  "),
+        Span::styled(branch.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+    ];
+
+    let staged = state.staged.len();
+    let unstaged = state.unstaged.len();
+    let untracked = state.untracked.len();
+
+    if staged > 0 || unstaged > 0 || untracked > 0 {
+        spans.push(Span::raw("  "));
+        if staged > 0 {
+            spans.push(Span::styled(format!("+{staged}"), Style::default().fg(Color::Green)));
+            spans.push(Span::raw(" "));
+        }
+        if unstaged > 0 {
+            spans.push(Span::styled(format!("!{unstaged}"), Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw(" "));
+        }
+        if untracked > 0 {
+            spans.push(Span::styled(format!("?{untracked}"), Style::default().fg(Color::Magenta)));
+            spans.push(Span::raw(" "));
+        }
+    } else {
+        spans.push(Span::raw(" "));
+    }
+
+    Line::from(spans)
+}
+
 fn build_list_items(state: &GitState) -> Vec<ListItem<'static>> {
     let mut items: Vec<ListItem<'static>> = Vec::new();
 
@@ -448,11 +479,7 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
 
                 let items = build_list_items(&app.git_state);
                 let list = List::new(items)
-                    .block(Block::default().borders(Borders::ALL).title(Line::from(vec![
-                        Span::raw(" watchdiff  "),
-                        Span::styled(app.branch.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                        Span::raw(" "),
-                    ])))
+                    .block(Block::default().borders(Borders::ALL).title(build_title(&app.branch, &app.git_state)))
                     .highlight_style(
                         Style::default()
                             .bg(Color::DarkGray)
