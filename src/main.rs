@@ -2,7 +2,6 @@ use std::io::{self, stdout};
 use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -518,36 +517,45 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
 // Editor
 // ---------------------------------------------------------------------------
 
-fn open_editor(path: &str) -> io::Result<()> {
-    disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen)?;
+fn open_editor(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    path: &str,
+) -> io::Result<()> {
+    let editor = std::env::var("EDITOR").ok();
+    let fallbacks = ["nvim", "vim", "vi"];
 
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nvim".to_string());
-    let status = Command::new(&editor).arg(path).status();
+    // Build candidate list: $EDITOR first, then fallbacks (deduped)
+    let mut candidates: Vec<&str> = Vec::new();
+    if let Some(ref e) = editor {
+        candidates.push(e.as_str());
+    }
+    for fb in &fallbacks {
+        if !candidates.contains(fb) {
+            candidates.push(fb);
+        }
+    }
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+    let mut launched = false;
+    for candidate in candidates {
+        if let Ok(status) = Command::new(candidate).arg(path).status() {
+            let _ = status; // exit code is the editor's business
+            launched = true;
+            break;
+        }
+    }
 
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen)?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    terminal.clear()?;
 
-    if status.is_err() && editor != "nvim" {
-        // Fallback to nvim
-        disable_raw_mode()?;
-        execute!(stdout(), LeaveAlternateScreen)?;
-        let _ = Command::new("nvim").arg(path).status();
-        enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen)?;
+    if !launched {
+        // Nothing we can do — silently continue; user will see watchdiff again
     }
 
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Event loop
-// ---------------------------------------------------------------------------
-
-enum AppEvent {
-    Key(KeyEvent),
-    FsChange,
-    Tick,
 }
 
 fn main() -> io::Result<()> {
@@ -573,28 +581,14 @@ fn main() -> io::Result<()> {
         diff_scroll: 0,
     };
 
-    let (tx, rx) = mpsc::channel::<AppEvent>();
-
-    // Key event thread
-    let tx_key = tx.clone();
-    thread::spawn(move || loop {
-        if event::poll(Duration::from_millis(200)).unwrap_or(false) {
-            if let Ok(Event::Key(key)) = event::read() {
-                let _ = tx_key.send(AppEvent::Key(key));
-            }
-        } else {
-            let _ = tx_key.send(AppEvent::Tick);
-        }
-    });
-
-    // Filesystem watcher
-    let tx_fs = tx.clone();
+    // FS watcher sends on a channel; key events are polled directly in the main loop
+    let (fs_tx, fs_rx) = mpsc::channel::<()>();
     let mut watcher: RecommendedWatcher =
         notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(ev) = res {
                 match ev.kind {
                     EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
-                        let _ = tx_fs.send(AppEvent::FsChange);
+                        let _ = fs_tx.send(());
                     }
                     _ => {}
                 }
@@ -612,28 +606,32 @@ fn main() -> io::Result<()> {
     draw(&mut terminal, &mut app)?;
 
     loop {
-        let evt = rx.recv().unwrap_or(AppEvent::Tick);
+        // Drain all pending FS events
+        if fs_rx.try_recv().is_ok() {
+            while fs_rx.try_recv().is_ok() {}
+            pending_refresh = true;
+        }
 
-        match evt {
-            AppEvent::FsChange => {
-                pending_refresh = true;
-            }
+        if pending_refresh && last_refresh.elapsed() > Duration::from_millis(300) {
+            pending_refresh = false;
+            last_refresh = std::time::Instant::now();
+            refresh_state(&mut app);
+            draw(&mut terminal, &mut app)?;
+        }
 
-            AppEvent::Tick => {
-                if pending_refresh && last_refresh.elapsed() > Duration::from_millis(300) {
-                    pending_refresh = false;
-                    last_refresh = std::time::Instant::now();
-                    refresh_state(&mut app);
-                    draw(&mut terminal, &mut app)?;
+        // Poll for a key event; short timeout so FS events stay responsive
+        if event::poll(Duration::from_millis(50))? {
+            if let Ok(Event::Key(key)) = event::read() {
+                match handle_key(&mut app, key) {
+                    KeyAction::Quit => break,
+                    KeyAction::OpenEditor(path) => {
+                        open_editor(&mut terminal, &path)?;
+                        draw(&mut terminal, &mut app)?;
+                    }
+                    KeyAction::None => {
+                        draw(&mut terminal, &mut app)?;
+                    }
                 }
-            }
-
-            AppEvent::Key(key) => {
-                let should_quit = handle_key(&mut app, key)?;
-                if should_quit {
-                    break;
-                }
-                draw(&mut terminal, &mut app)?;
             }
         }
     }
@@ -689,14 +687,20 @@ fn refresh_state(app: &mut App) {
     }
 }
 
-fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
+enum KeyAction {
+    Quit,
+    OpenEditor(String),
+    None,
+}
+
+fn handle_key(app: &mut App, key: KeyEvent) -> KeyAction {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        return Ok(true);
+        return KeyAction::Quit;
     }
 
     match app.view {
         AppView::List => match key.code {
-            KeyCode::Char('q') => return Ok(true),
+            KeyCode::Char('q') => return KeyAction::Quit,
 
             KeyCode::Up | KeyCode::Char('k') => move_cursor(app, -1),
             KeyCode::Down | KeyCode::Char('j') => move_cursor(app, 1),
@@ -712,8 +716,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
             KeyCode::Char('e') => {
                 if let Some(file) = selected_file(app) {
-                    let path = file.path.clone();
-                    open_editor(&path)?;
+                    return KeyAction::OpenEditor(file.path.clone());
                 }
             }
 
@@ -737,8 +740,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
             KeyCode::Char('e') => {
                 if let Some(file) = selected_file(app) {
-                    let path = file.path.clone();
-                    open_editor(&path)?;
+                    return KeyAction::OpenEditor(file.path.clone());
                 }
             }
 
@@ -746,7 +748,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         },
     }
 
-    Ok(false)
+    KeyAction::None
 }
 
 fn selected_file(app: &App) -> Option<&ChangedFile> {
