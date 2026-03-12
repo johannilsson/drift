@@ -78,6 +78,7 @@ struct App {
     view: AppView,
     diff_lines: Vec<String>,
     diff_scroll: usize,
+    diff_viewport_height: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +491,7 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                         horizontal: 1,
                     })
                     .height as usize;
+                app.diff_viewport_height = view_h.max(1);
                 if content_len > view_h {
                     let mut sb_state =
                         ScrollbarState::new(content_len.saturating_sub(view_h))
@@ -501,8 +503,14 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                 let help = Paragraph::new(Line::from(vec![
                     Span::styled(" Esc", Style::default().fg(Color::Yellow)),
                     Span::raw(" back  "),
-                    Span::styled("↑↓/jk", Style::default().fg(Color::Yellow)),
-                    Span::raw(" scroll  "),
+                    Span::styled("jk", Style::default().fg(Color::Yellow)),
+                    Span::raw(" line  "),
+                    Span::styled("^d^u", Style::default().fg(Color::Yellow)),
+                    Span::raw(" half  "),
+                    Span::styled("^f^b", Style::default().fg(Color::Yellow)),
+                    Span::raw(" page  "),
+                    Span::styled("gG", Style::default().fg(Color::Yellow)),
+                    Span::raw(" top/bot  "),
                     Span::styled("e", Style::default().fg(Color::Yellow)),
                     Span::raw(" edit"),
                 ]));
@@ -579,6 +587,7 @@ fn main() -> io::Result<()> {
         view: AppView::List,
         diff_lines: Vec::new(),
         diff_scroll: 0,
+        diff_viewport_height: 24,
     };
 
     // FS watcher sends on a channel; key events are polled directly in the main loop
@@ -723,29 +732,62 @@ fn handle_key(app: &mut App, key: KeyEvent) -> KeyAction {
             _ => {}
         },
 
-        AppView::Diff => match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                app.view = AppView::List;
-            }
+        AppView::Diff => {
+            let max_scroll = app.diff_lines.len().saturating_sub(1);
+            let half = (app.diff_viewport_height / 2).max(1);
+            let full = app.diff_viewport_height.max(1);
 
-            KeyCode::Up | KeyCode::Char('k') => {
-                app.diff_scroll = app.diff_scroll.saturating_sub(1);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let max = app.diff_lines.len().saturating_sub(1);
-                if app.diff_scroll < max {
-                    app.diff_scroll += 1;
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    app.view = AppView::List;
                 }
-            }
 
-            KeyCode::Char('e') => {
-                if let Some(file) = selected_file(app) {
-                    return KeyAction::OpenEditor(file.path.clone());
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.diff_scroll = app.diff_scroll.saturating_sub(1);
                 }
-            }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.diff_scroll = (app.diff_scroll + 1).min(max_scroll);
+                }
 
-            _ => {}
-        },
+                // Half page
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.diff_scroll = app.diff_scroll.saturating_sub(half);
+                }
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.diff_scroll = (app.diff_scroll + half).min(max_scroll);
+                }
+
+                // Full page
+                KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.diff_scroll = app.diff_scroll.saturating_sub(full);
+                }
+                KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.diff_scroll = (app.diff_scroll + full).min(max_scroll);
+                }
+                KeyCode::PageUp => {
+                    app.diff_scroll = app.diff_scroll.saturating_sub(full);
+                }
+                KeyCode::PageDown => {
+                    app.diff_scroll = (app.diff_scroll + full).min(max_scroll);
+                }
+
+                // Top / bottom
+                KeyCode::Char('g') => {
+                    app.diff_scroll = 0;
+                }
+                KeyCode::Char('G') => {
+                    app.diff_scroll = max_scroll;
+                }
+
+                KeyCode::Char('e') => {
+                    if let Some(file) = selected_file(app) {
+                        return KeyAction::OpenEditor(file.path.clone());
+                    }
+                }
+
+                _ => {}
+            }
+        }
     }
 
     KeyAction::None
