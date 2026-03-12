@@ -49,6 +49,17 @@ struct GitState {
     untracked: Vec<ChangedFile>,
 }
 
+fn fetch_branch() -> String {
+    run_git(&["branch", "--show-current"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            run_git(&["rev-parse", "--short", "HEAD"])
+                .map(|s| format!("({})", s.trim()))
+                .unwrap_or_else(|| "(detached)".to_string())
+        })
+}
+
 impl GitState {
     fn all_files(&self) -> Vec<&ChangedFile> {
         self.staged
@@ -74,6 +85,7 @@ enum AppView {
 
 struct App {
     git_state: GitState,
+    branch: String,
     list_state: ListState,
     view: AppView,
     diff_lines: Vec<String>,
@@ -436,7 +448,11 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
 
                 let items = build_list_items(&app.git_state);
                 let list = List::new(items)
-                    .block(Block::default().borders(Borders::ALL).title(" watchdiff "))
+                    .block(Block::default().borders(Borders::ALL).title(Line::from(vec![
+                        Span::raw(" watchdiff  "),
+                        Span::styled(app.branch.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::raw(" "),
+                    ])))
                     .highlight_style(
                         Style::default()
                             .bg(Color::DarkGray)
@@ -567,10 +583,15 @@ fn open_editor(
 }
 
 fn main() -> io::Result<()> {
-    if run_git(&["rev-parse", "--git-dir"]).is_none() {
-        eprintln!("watchdiff: not a git repository");
-        std::process::exit(1);
-    }
+    let repo_root = run_git(&["rev-parse", "--show-toplevel"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| {
+            eprintln!("watchdiff: not a git repository");
+            std::process::exit(1);
+        });
+
+    let git_dir = run_git(&["rev-parse", "--git-dir"])
+        .map(|s| s.trim().to_string());
 
     enable_raw_mode()?;
     let mut out = stdout();
@@ -579,10 +600,12 @@ fn main() -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let git_state = fetch_git_state();
+    let branch = fetch_branch();
     let initial_selection = first_file_visual(&git_state);
 
     let mut app = App {
         git_state,
+        branch,
         list_state: ListState::default().with_selected(initial_selection),
         view: AppView::List,
         diff_lines: Vec::new(),
@@ -606,8 +629,19 @@ fn main() -> io::Result<()> {
         .expect("failed to create watcher");
 
     watcher
-        .watch(Path::new("."), RecursiveMode::Recursive)
+        .watch(Path::new(&repo_root), RecursiveMode::Recursive)
         .unwrap_or_else(|e| eprintln!("watcher error: {e}"));
+
+    // For worktrees the gitdir lives outside the repo root (e.g. .git/worktrees/<name>
+    // inside the main repo), so watch it separately to catch HEAD changes there too.
+    if let Some(ref gd) = git_dir {
+        let gd_path = Path::new(gd);
+        if !gd_path.starts_with(&repo_root) {
+            watcher
+                .watch(gd_path, RecursiveMode::Recursive)
+                .unwrap_or_else(|e| eprintln!("watcher error (git-dir): {e}"));
+        }
+    }
 
     let mut pending_refresh = false;
     let mut last_refresh = std::time::Instant::now();
@@ -629,17 +663,17 @@ fn main() -> io::Result<()> {
         }
 
         // Poll for a key event; short timeout so FS events stay responsive
-        if event::poll(Duration::from_millis(50))? {
-            if let Ok(Event::Key(key)) = event::read() {
-                match handle_key(&mut app, key) {
-                    KeyAction::Quit => break,
-                    KeyAction::OpenEditor(path) => {
-                        open_editor(&mut terminal, &path)?;
-                        draw(&mut terminal, &mut app)?;
-                    }
-                    KeyAction::None => {
-                        draw(&mut terminal, &mut app)?;
-                    }
+        if event::poll(Duration::from_millis(50))?
+            && let Ok(Event::Key(key)) = event::read()
+        {
+            match handle_key(&mut app, key) {
+                KeyAction::Quit => break,
+                KeyAction::OpenEditor(path) => {
+                    open_editor(&mut terminal, &path)?;
+                    draw(&mut terminal, &mut app)?;
+                }
+                KeyAction::None => {
+                    draw(&mut terminal, &mut app)?;
                 }
             }
         }
@@ -673,26 +707,25 @@ fn refresh_state(app: &mut App) {
         .map(|f| f.path.clone());
 
     app.git_state = fetch_git_state();
+    app.branch = fetch_branch();
 
     // Keep cursor on same file if still present
-    if let Some(path) = current_path {
-        if let Some(fi) = app.git_state.find_index(&path) {
-            let vi = file_to_visual_index(&app.git_state, fi);
-            app.list_state.select(Some(vi));
-        }
+    if let Some(path) = current_path
+        && let Some(fi) = app.git_state.find_index(&path)
+    {
+        let vi = file_to_visual_index(&app.git_state, fi);
+        app.list_state.select(Some(vi));
     }
 
     // Refresh diff content if in diff view
-    if matches!(app.view, AppView::Diff) {
-        if let Some(vi) = app.list_state.selected() {
-            if let Some(fi) = visual_to_file_index(&app.git_state, vi) {
-                if let Some(file) = app.git_state.file_at_index(fi) {
-                    let scroll = app.diff_scroll;
-                    app.diff_lines = fetch_diff(file);
-                    app.diff_scroll = scroll.min(app.diff_lines.len().saturating_sub(1));
-                }
-            }
-        }
+    if matches!(app.view, AppView::Diff)
+        && let Some(vi) = app.list_state.selected()
+        && let Some(fi) = visual_to_file_index(&app.git_state, vi)
+        && let Some(file) = app.git_state.file_at_index(fi)
+    {
+        let scroll = app.diff_scroll;
+        app.diff_lines = fetch_diff(file);
+        app.diff_scroll = scroll.min(app.diff_lines.len().saturating_sub(1));
     }
 }
 
