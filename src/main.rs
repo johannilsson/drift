@@ -11,7 +11,7 @@ use crossterm::terminal::{
 };
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Margin};
+use ratatui::layout::{Margin};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -472,11 +472,6 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
 
         match app.view {
             AppView::List => {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(1), Constraint::Length(1)])
-                    .split(size);
-
                 let items = build_list_items(&app.git_state);
                 let list = List::new(items)
                     .block(Block::default().borders(Borders::ALL).title(build_title(&app.branch, &app.git_state)))
@@ -486,27 +481,10 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                             .add_modifier(Modifier::BOLD),
                     );
 
-                frame.render_stateful_widget(list, chunks[0], &mut app.list_state);
-
-                let help = Paragraph::new(Line::from(vec![
-                    Span::styled(" q", Style::default().fg(Color::Yellow)),
-                    Span::raw(" quit  "),
-                    Span::styled("↑↓/jk", Style::default().fg(Color::Yellow)),
-                    Span::raw(" nav  "),
-                    Span::styled("Enter", Style::default().fg(Color::Yellow)),
-                    Span::raw(" diff  "),
-                    Span::styled("e", Style::default().fg(Color::Yellow)),
-                    Span::raw(" edit"),
-                ]));
-                frame.render_widget(help, chunks[1]);
+                frame.render_stateful_widget(list, size, &mut app.list_state);
             }
 
             AppView::Diff => {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(1), Constraint::Length(1)])
-                    .split(size);
-
                 let title = app
                     .list_state
                     .selected()
@@ -524,11 +502,11 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
 
                 let para = Paragraph::new(diff_text)
                     .block(Block::default().borders(Borders::ALL).title(title));
-                frame.render_widget(para, chunks[0]);
+                frame.render_widget(para, size);
 
                 // Scrollbar
                 let content_len = app.diff_lines.len();
-                let view_h = chunks[0]
+                let view_h = size
                     .inner(Margin {
                         vertical: 1,
                         horizontal: 1,
@@ -540,24 +518,8 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                         ScrollbarState::new(content_len.saturating_sub(view_h))
                             .position(app.diff_scroll);
                     let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-                    frame.render_stateful_widget(sb, chunks[0], &mut sb_state);
+                    frame.render_stateful_widget(sb, size, &mut sb_state);
                 }
-
-                let help = Paragraph::new(Line::from(vec![
-                    Span::styled(" Esc", Style::default().fg(Color::Yellow)),
-                    Span::raw(" back  "),
-                    Span::styled("jk", Style::default().fg(Color::Yellow)),
-                    Span::raw(" line  "),
-                    Span::styled("^d^u", Style::default().fg(Color::Yellow)),
-                    Span::raw(" half  "),
-                    Span::styled("^f^b", Style::default().fg(Color::Yellow)),
-                    Span::raw(" page  "),
-                    Span::styled("gG", Style::default().fg(Color::Yellow)),
-                    Span::raw(" top/bot  "),
-                    Span::styled("e", Style::default().fg(Color::Yellow)),
-                    Span::raw(" edit"),
-                ]));
-                frame.render_widget(help, chunks[1]);
             }
         }
     })?;
