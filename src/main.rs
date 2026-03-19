@@ -247,10 +247,10 @@ fn render_diff(file: &ChangedFile, use_delta: bool) -> Vec<Line<'static>> {
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = stdin.write_all(raw.as_bytes());
             }
-            if let Ok(out) = child.wait_with_output() {
-                if let Ok(text) = ansi_to_tui::IntoText::into_text(&out.stdout) {
-                    return text.lines;
-                }
+            if let Ok(out) = child.wait_with_output()
+                && let Ok(text) = ansi_to_tui::IntoText::into_text(&out.stdout)
+            {
+                return text.lines;
             }
         }
     }
@@ -693,6 +693,12 @@ fn main() -> io::Result<()> {
                     open_editor(&mut terminal, &path)?;
                     draw(&mut terminal, &mut app)?;
                 }
+                KeyAction::GitAdd(path) => {
+                    let _ = Command::new("git")
+                        .args(["add", &path])
+                        .current_dir(&repo_root)
+                        .status();
+                }
                 KeyAction::None => {
                     draw(&mut terminal, &mut app)?;
                 }
@@ -753,6 +759,7 @@ fn refresh_state(app: &mut App) {
 enum KeyAction {
     Quit,
     OpenEditor(String),
+    GitAdd(String),
     None,
 }
 
@@ -780,6 +787,12 @@ fn handle_key(app: &mut App, key: KeyEvent) -> KeyAction {
             KeyCode::Char('e') => {
                 if let Some(file) = selected_file(app) {
                     return KeyAction::OpenEditor(file.path.clone());
+                }
+            }
+
+            KeyCode::Char('a') => {
+                if let Some(file) = selected_file(app) {
+                    return KeyAction::GitAdd(file.path.clone());
                 }
             }
 
