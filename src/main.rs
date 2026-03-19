@@ -88,9 +88,10 @@ struct App {
     branch: String,
     list_state: ListState,
     view: AppView,
-    diff_lines: Vec<String>,
+    diff_styled: Vec<Line<'static>>,
     diff_scroll: usize,
     diff_viewport_height: usize,
+    use_delta: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -219,14 +220,43 @@ fn fetch_git_state() -> GitState {
     state
 }
 
-fn fetch_diff(file: &ChangedFile) -> Vec<String> {
+fn delta_available() -> bool {
+    Command::new("delta")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+fn render_diff(file: &ChangedFile, use_delta: bool) -> Vec<Line<'static>> {
     let args: Vec<&str> = if file.staged {
         vec!["diff", "--cached", "--", &file.path]
     } else {
         vec!["diff", "--", &file.path]
     };
-    let output = run_git(&args).unwrap_or_default();
-    output.lines().map(|l| l.to_string()).collect()
+    let raw = run_git(&args).unwrap_or_default();
+
+    if use_delta {
+        use std::io::Write;
+        use std::process::Stdio;
+        if let Ok(mut child) = Command::new("delta")
+            .env("COLORTERM", "truecolor")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+        {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(raw.as_bytes());
+            }
+            if let Ok(out) = child.wait_with_output() {
+                if let Ok(text) = ansi_to_tui::IntoText::into_text(&out.stdout) {
+                    return text.lines;
+                }
+            }
+        }
+    }
+
+    // Fallback: built-in colorizer
+    raw.lines().map(render_diff_line).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -494,10 +524,10 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                     .unwrap_or_else(|| " diff ".to_string());
 
                 let diff_text: Vec<Line<'static>> = app
-                    .diff_lines
+                    .diff_styled
                     .iter()
                     .skip(app.diff_scroll)
-                    .map(|l| render_diff_line(l))
+                    .cloned()
                     .collect();
 
                 let para = Paragraph::new(diff_text)
@@ -505,7 +535,7 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                 frame.render_widget(para, size);
 
                 // Scrollbar
-                let content_len = app.diff_lines.len();
+                let content_len = app.diff_styled.len();
                 let view_h = size
                     .inner(Margin {
                         vertical: 1,
@@ -591,15 +621,17 @@ fn main() -> io::Result<()> {
     let git_state = fetch_git_state();
     let branch = fetch_branch();
     let initial_selection = first_file_visual(&git_state);
+    let use_delta = delta_available();
 
     let mut app = App {
         git_state,
         branch,
         list_state: ListState::default().with_selected(initial_selection),
         view: AppView::List,
-        diff_lines: Vec::new(),
+        diff_styled: Vec::new(),
         diff_scroll: 0,
         diff_viewport_height: 24,
+        use_delta,
     };
 
     // FS watcher sends on a channel; key events are polled directly in the main loop
@@ -713,8 +745,8 @@ fn refresh_state(app: &mut App) {
         && let Some(file) = app.git_state.file_at_index(fi)
     {
         let scroll = app.diff_scroll;
-        app.diff_lines = fetch_diff(file);
-        app.diff_scroll = scroll.min(app.diff_lines.len().saturating_sub(1));
+        app.diff_styled = render_diff(file, app.use_delta);
+        app.diff_scroll = scroll.min(app.diff_styled.len().saturating_sub(1));
     }
 }
 
@@ -739,7 +771,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> KeyAction {
             KeyCode::Enter => {
                 if let Some(file) = selected_file(app) {
                     let file = file.clone();
-                    app.diff_lines = fetch_diff(&file);
+                    app.diff_styled = render_diff(&file, app.use_delta);
                     app.diff_scroll = 0;
                     app.view = AppView::Diff;
                 }
@@ -755,7 +787,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> KeyAction {
         },
 
         AppView::Diff => {
-            let max_scroll = app.diff_lines.len().saturating_sub(1);
+            let max_scroll = app.diff_styled.len().saturating_sub(1);
             let half = (app.diff_viewport_height / 2).max(1);
             let full = app.diff_viewport_height.max(1);
 
