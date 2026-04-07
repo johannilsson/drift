@@ -11,12 +11,11 @@ use crossterm::terminal::{
 };
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Margin};
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
-    ScrollbarState,
+    List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 use ratatui::Terminal;
 
@@ -360,7 +359,7 @@ fn build_file_item(f: &ChangedFile) -> ListItem<'static> {
     let style = status_style(&f.status);
 
     let mut spans = vec![
-        Span::styled(format!("  {} ", sc), style),
+        Span::styled(format!(" {} ", sc), style),
         Span::styled(f.path.clone(), Style::default()),
     ];
 
@@ -496,22 +495,27 @@ fn render_diff_line(line: &str) -> Line<'static> {
 // Rendering
 // ---------------------------------------------------------------------------
 
+const TITLE_BG: Color = Color::Rgb(32, 32, 44);
+
 fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
     terminal.draw(|frame| {
         let size = frame.area();
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(size);
 
         match app.view {
             AppView::List => {
+                let title_para = Paragraph::new(build_title(&app.branch, &app.git_state))
+                    .style(Style::default().bg(TITLE_BG));
+                frame.render_widget(title_para, chunks[0]);
+
                 let items = build_list_items(&app.git_state);
                 let list = List::new(items)
-                    .block(Block::default().borders(Borders::ALL).title(build_title(&app.branch, &app.git_state)))
-                    .highlight_style(
-                        Style::default()
-                            .bg(Color::DarkGray)
-                            .add_modifier(Modifier::BOLD),
-                    );
-
-                frame.render_stateful_widget(list, size, &mut app.list_state);
+                    .highlight_symbol("› ")
+                    .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+                frame.render_stateful_widget(list, chunks[1], &mut app.list_state);
             }
 
             AppView::Diff => {
@@ -523,6 +527,10 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                     .map(|f| format!(" {} ", f.path))
                     .unwrap_or_else(|| " diff ".to_string());
 
+                let title_para = Paragraph::new(title)
+                    .style(Style::default().bg(TITLE_BG));
+                frame.render_widget(title_para, chunks[0]);
+
                 let diff_text: Vec<Line<'static>> = app
                     .diff_styled
                     .iter()
@@ -530,25 +538,19 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                     .cloned()
                     .collect();
 
-                let para = Paragraph::new(diff_text)
-                    .block(Block::default().borders(Borders::ALL).title(title));
-                frame.render_widget(para, size);
+                let para = Paragraph::new(diff_text);
+                frame.render_widget(para, chunks[1]);
 
                 // Scrollbar
                 let content_len = app.diff_styled.len();
-                let view_h = size
-                    .inner(Margin {
-                        vertical: 1,
-                        horizontal: 1,
-                    })
-                    .height as usize;
+                let view_h = chunks[1].height as usize;
                 app.diff_viewport_height = view_h.max(1);
                 if content_len > view_h {
                     let mut sb_state =
                         ScrollbarState::new(content_len.saturating_sub(view_h))
                             .position(app.diff_scroll);
                     let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-                    frame.render_stateful_widget(sb, size, &mut sb_state);
+                    frame.render_stateful_widget(sb, chunks[1], &mut sb_state);
                 }
             }
         }
@@ -881,5 +883,8 @@ fn move_cursor(app: &mut App, delta: i32) {
         attempts += 1;
     }
 
-    app.list_state.select(Some(next as usize));
+    // If we still landed on a header (e.g. clamped at boundary), don't move
+    if visual_to_file_index(&app.git_state, next as usize).is_some() {
+        app.list_state.select(Some(next as usize));
+    }
 }
