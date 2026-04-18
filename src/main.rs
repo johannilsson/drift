@@ -10,6 +10,7 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -17,7 +18,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
-use ratatui::Terminal;
 
 // ---------------------------------------------------------------------------
 // Domain types
@@ -285,7 +285,12 @@ fn status_char(status: &FileStatus) -> &'static str {
 fn build_title(branch: &str, state: &GitState) -> Line<'static> {
     let mut spans = vec![
         Span::raw(" watchdiff  "),
-        Span::styled(branch.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            branch.to_string(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
 
     let staged = state.staged.len();
@@ -295,15 +300,24 @@ fn build_title(branch: &str, state: &GitState) -> Line<'static> {
     if staged > 0 || unstaged > 0 || untracked > 0 {
         spans.push(Span::raw("  "));
         if staged > 0 {
-            spans.push(Span::styled(format!("+{staged}"), Style::default().fg(Color::Green)));
+            spans.push(Span::styled(
+                format!("+{staged}"),
+                Style::default().fg(Color::Green),
+            ));
             spans.push(Span::raw(" "));
         }
         if unstaged > 0 {
-            spans.push(Span::styled(format!("!{unstaged}"), Style::default().fg(Color::Yellow)));
+            spans.push(Span::styled(
+                format!("!{unstaged}"),
+                Style::default().fg(Color::Yellow),
+            ));
             spans.push(Span::raw(" "));
         }
         if untracked > 0 {
-            spans.push(Span::styled(format!("?{untracked}"), Style::default().fg(Color::Magenta)));
+            spans.push(Span::styled(
+                format!("?{untracked}"),
+                Style::default().fg(Color::Magenta),
+            ));
             spans.push(Span::raw(" "));
         }
     } else {
@@ -527,8 +541,7 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                     .map(|f| format!(" {} ", f.path))
                     .unwrap_or_else(|| " diff ".to_string());
 
-                let title_para = Paragraph::new(title)
-                    .style(Style::default().bg(TITLE_BG));
+                let title_para = Paragraph::new(title).style(Style::default().bg(TITLE_BG));
                 frame.render_widget(title_para, chunks[0]);
 
                 let diff_text: Vec<Line<'static>> = app
@@ -546,9 +559,8 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) ->
                 let view_h = chunks[1].height as usize;
                 app.diff_viewport_height = view_h.max(1);
                 if content_len > view_h {
-                    let mut sb_state =
-                        ScrollbarState::new(content_len.saturating_sub(view_h))
-                            .position(app.diff_scroll);
+                    let mut sb_state = ScrollbarState::new(content_len.saturating_sub(view_h))
+                        .position(app.diff_scroll);
                     let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight);
                     frame.render_stateful_widget(sb, chunks[1], &mut sb_state);
                 }
@@ -611,8 +623,7 @@ fn main() -> io::Result<()> {
             std::process::exit(1);
         });
 
-    let git_dir = run_git(&["rev-parse", "--git-dir"])
-        .map(|s| s.trim().to_string());
+    let git_dir = run_git(&["rev-parse", "--git-dir"]).map(|s| s.trim().to_string());
 
     let _ = std::env::set_current_dir(&repo_root);
 
