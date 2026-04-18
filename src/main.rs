@@ -614,6 +614,8 @@ fn main() -> io::Result<()> {
     let git_dir = run_git(&["rev-parse", "--git-dir"])
         .map(|s| s.trim().to_string());
 
+    let _ = std::env::set_current_dir(&repo_root);
+
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;
