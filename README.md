@@ -1,4 +1,5 @@
-# watchdiff
+# Drift
+
 
 A terminal TUI for monitoring git repository changes in real time. Designed to run alongside an editor or AI coding tool as a passive change monitor.
 
@@ -13,7 +14,7 @@ cargo install --path .
 Run from within any git repository:
 
 ```sh
-watchdiff
+drift
 ```
 
 ## Keys

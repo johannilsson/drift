@@ -23,8 +23,8 @@ jobs:
       - name: Package
         run: |
           cd target/aarch64-apple-darwin/release
-          tar czf watchdiff-darwin-arm64.tar.gz watchdiff
-          shasum -a 256 watchdiff-darwin-arm64.tar.gz > watchdiff-darwin-arm64.tar.gz.sha256
+          tar czf drift-darwin-arm64.tar.gz drift
+          shasum -a 256 drift-darwin-arm64.tar.gz > drift-darwin-arm64.tar.gz.sha256
 
       - name: Update tip release
         env:
@@ -35,5 +35,5 @@ jobs:
             --title "Tip (latest build)" \
             --notes "Built from \`${{ github.sha }}\`." \
             --prerelease \
-            target/aarch64-apple-darwin/release/watchdiff-darwin-arm64.tar.gz \
-            target/aarch64-apple-darwin/release/watchdiff-darwin-arm64.tar.gz.sha256
+            target/aarch64-apple-darwin/release/drift-darwin-arm64.tar.gz \
+            target/aarch64-apple-darwin/release/drift-darwin-arm64.tar.gz.sha256

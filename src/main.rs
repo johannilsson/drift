@@ -284,7 +284,7 @@ fn status_char(status: &FileStatus) -> &'static str {
 
 fn build_title(branch: &str, state: &GitState) -> Line<'static> {
     let mut spans = vec![
-        Span::raw(" watchdiff  "),
+        Span::raw(" drift  "),
         Span::styled(
             branch.to_string(),
             Style::default()
@@ -609,7 +609,7 @@ fn open_editor(
     terminal.clear()?;
 
     if !launched {
-        // Nothing we can do — silently continue; user will see watchdiff again
+        // Nothing we can do — silently continue; user will see drift again
     }
 
     Ok(())
@@ -619,7 +619,7 @@ fn main() -> io::Result<()> {
     let repo_root = run_git(&["rev-parse", "--show-toplevel"])
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| {
-            eprintln!("watchdiff: not a git repository");
+            eprintln!("drift: not a git repository");
             std::process::exit(1);
         });
 

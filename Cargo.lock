@@ -296,6 +296,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "drift"
+version = "0.1.0"
+dependencies = [
+ "ansi-to-tui",
+ "crossterm",
+ "notify",
+ "ratatui",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1638,16 +1648,6 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
-]
-
-[[package]]
-name = "watchdiff"
-version = "0.1.0"
-dependencies = [
- "ansi-to-tui",
- "crossterm",
- "notify",
- "ratatui",
 ]
 
 [[package]]

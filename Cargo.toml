@@ -1,10 +1,10 @@
 [package]
-name = "watchdiff"
+name = "drift"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "watchdiff"
+name = "drift"
 path = "src/main.rs"
 
 [dependencies]
